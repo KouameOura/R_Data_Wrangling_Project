@@ -11,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 library(jsonlite)
 library(lubridate)
 library(dplyr)
@@ -22,15 +22,19 @@ library(stringr)
 library(purrr)
 library(tidyr)
 library(plotly)
+library(tidyverse)
 ```
 
 #                               ###### NEW YORK CITY MOTOR VEHICLE COLLISION #######
 
+The Motor Vehicle Collisions-Crashes* dataset from NYC Open Data will be used. It is provided by the Police Department(NYPD). The dataset has 1.77 million rows and 29 columns, each row contains details about crash event in New York city. It is downloaded using R programming, API Endpoint and saved to the working directory as a .json file. The goal of this project is to use R tools to explore and analyze New York City Motor Vehicle collisions.
+
 ## Data
 
-##### Downloading data and save it locally
+##### Downloading data once and save it locally
+This is to avoid downloading the data multiple times, saving time.
 
-1768292 rows and 29 variables
+The data has 1768292 rows and 29 variables
 
 ```{r}
 #### https://dmv.ny.gov/forms/p33.pdf Police Crash Report Submission Instructions
@@ -49,14 +53,16 @@ crash_data =crash_data[ , c("crash_date", "crash_time", "borough", "zip_code", "
 
 #### First six rows of data
 
+To have an idea of the data
 ```{r}
 crash_data = as_tibble(crash_data) # convert data.frame to tibble
 crash_data
 ```
 #### Records missing accurate location
-
+Identifying records missing longitude or latitude.
 ```{r}
-sum(is.na(as.numeric(crash_data$longitude) & as.numeric(crash_data$latitude)))
+na_loc=sum(is.na(as.numeric(crash_data$longitude) & as.numeric(crash_data$latitude)))
+na_loc # records missing longitude or latitude
 ```
 
 Removing records missing location longitude or latitude coordinate
@@ -67,16 +73,18 @@ crash_data = crash_data[! is.na(crash_data$latitude),]
 ```
 
 #### Primary key check
+Checking if there is a duplicate record
 
 ```{r message=FALSE, warning=FALSE}
 library(sets)
-sum(is.na(crash_data$collision_id)) # Checking for missing primary key
+num_dup=sum(is.na(crash_data$collision_id)) # Checking for missing primary key
 anyDuplicated(crash_data$collision_id) # Checking for duplicate records
+num_dup
 ```
 
 #### Crash time format
 
-Remove the trailing component "T00:00:00.000" from crash_date,
+Removing the trailing component "T00:00:00.000" from crash_date,
 then rename concatenation of crash_date and crash_time as
 crash_time in the ymd_hm date format
 
@@ -97,12 +105,16 @@ crash_data[,c(3,6,7,8,9,10,11,12,13,16)] = # Numeric conversion
 ```
 
 ## Visualization
+In this part, plots will be conducted for New York city in general then for each borough
 
 
+#### Contributing factor of crashes in New York city
 
-Contributing factor of crashes in New York city
+ What are the contribuiting factors of motor vehicles crashes in New York city?
+ Column plots have been plotted for top 10 contribuiting factors for vehicle 1 and 2.
 
 ```{r message=FALSE, warning=FALSE}
+# vehicle 1
 contrib1 = crash_data %>% 
   select(contributing_factor_vehicle_1) %>%
   group_by(contributing_factor_vehicle_1) %>%
@@ -114,8 +126,10 @@ contrib1 = crash_data %>%
 p1 =ggplot( contrib1, 
       aes(x=reorder(contributing_factor_vehicle_1,crash_count),crash_count)) +
     geom_col(fill="firebrick2") +ggtitle("Top 10 contributing factor vehicle 1") + theme(plot.title =   element_text(hjust = 0.5)) + xlab("contribuiting factor") + ylab("crashes count") + coord_flip()  # Plot of top 10 contribution factor of crashes from vehicle 1
+```
 
-
+```{r message=FALSE, warning=FALSE}
+# vehicle 2
 contrib2=crash_data %>% select(contributing_factor_vehicle_2)%>% 
   group_by(contributing_factor_vehicle_2) %>%
   summarise(crash_count=n()) %>%
@@ -130,13 +144,14 @@ p2 =ggplot( contrib2,
 
 #### Plot of contributing factors
 
-
-
 ```{r, fig.height=4}
 grid.arrange(p1,p2)
 ```
+The plots show that the first contributing factor from motor vehicles 1 and 2 is unspecified. Then the driver distraction
+
 
 Monthly crashes data
+The following three blocks of code aggreagte the data monthly, then conduct a plot of times series of total crashes from June 2012 to April 2021
 ```{r}
 monthly_crash_raw=crash_data %>% 
   mutate(crash_year = year(crash_time), crash_month = month(crash_time)) %>%
@@ -173,9 +188,13 @@ P_mth_tot=ggplot(total_monthly_crash, aes(x=date_month,y=total_event,color="red3
   theme(axis.text.x = element_text(angle=45), axis.ticks.length.x = unit(-.1, "cm"),legend.position = "none")
 ggplotly(P_mth_tot, tooltip = c("total_event"))
 ```
+There is in general a slow increase of total monthly crashes in New York city, with two abrupt decreases and low values in April 2016 and 2020, and 
+heading to the lowest value in April 2021, last month of collection of the data.
 
 
 #### Fatalities(Injured/killed) plot
+
+Plots of monthly total injured and killed during motor vehicles collisions.
 
 ```{r, fig.height=2 }
 monthly_crash_cat=monthly_crash %>% mutate(injured = pers_injured, killed=pers_killed) %>%
@@ -187,10 +206,12 @@ P_mth_crash=monthly_crash_cat %>%ggplot(aes(x=date_vec,y=monthly_count,group=fat
   theme(axis.text.x = element_text(angle=45), axis.ticks.length.x = unit(-.1, "cm"),legend.position="bottom",legend.title=element_blank())
 ggplotly(P_mth_crash, tooltip = c("fatality_category","monthly_count"))
 ```
+The plots show that the injured plot has always been above of that of killed, suggesting that there have been in general les killed that injured during crashes.
+Probably due to the low speed limit of New York city in genral. This need to be inverstigated thoroughly to reach a conclusion, because there might be some lurking variables.
 
 
 #### Plot by fatalities categories
-
+Here categories are: cyclist, motorist and pedestrians: injured and killed
 ```{r, fig.height=2 }
 # Plot by variable 
 
@@ -204,10 +225,13 @@ P_mth_long=monthly_crash_long %>% ggplot(aes(x=date_vec,y=monthly_count,color=fa
   theme(axis.text.x = element_text(angle=45),axis.ticks.length.x = unit(-.1, "cm"),legend.position="bottom",legend.title=element_blank())
 ggplotly(P_mth_long, tooltip = c("fatality_category","monthly_count"))
 ```
-
+The plots are in general: above that of motorists injured, followed by that of pedestrians injured, cyclists injured. There is no difference in general for the
+number of motorists killed, pedestrians killed, and cyclists killed.
 
 
 Monthly aggregation by borough
+
+Aggregation is conducted for the five borough: Bronx, Brooklyn, Mahanttan, Queens and Staten Island.
 
 BRONX
 ```{r message=FALSE, warning=FALSE}
@@ -265,7 +289,7 @@ statenIsl_crash=monthly_crash_raw %>% filter(borough=="STATEN ISLAND") %>% selec
 ```
 
 #### Fatalities plot per borough
-
+Plots by borough by categories
 ##### BRONX
 ```{r, fig.height=2 }
 bronx_crash_long = bronx_crash[,-c(2,3,12)]
@@ -333,6 +357,7 @@ boro_mot_injured = data.frame(bronx_crash$date_vec, bronx_crash$mot_injured,
 colnames(boro_mot_injured) = c("date_vec", "Bronx", "Brooklyn",
                             "Manhattan","Queens","StatenIsl")
 ```
+Because motorists injured and pedestrians injured plots where above all the categories in general. There have been plot individually by categories as followed.
 
 #### Motorists injured in NYC boroughs
 
@@ -347,6 +372,7 @@ P_mot_inj =ggplot(mot_injured_long, aes(x = date_vec, y=inj_count,color=boro)) +
  ggplotly(P_mot_inj,tooltip = c("inj_count","boro"))
 ```
 
+
 ```{r}
 boro_peds_injured = data.frame(bronx_crash$date_vec, bronx_crash$pedest_injured,
                 brooklyn_crash$pedest_injured,manhattan_crash$pedest_injured, 
@@ -356,6 +382,7 @@ colnames(boro_peds_injured) = c("date_vec", "Bronx", "Brooklyn",
 ```
 
 #### Pedestrians injured in NYC boroughs
+
 
 ```{r, fig.height=2 }
 peds_injured_long = boro_peds_injured %>%
@@ -367,3 +394,9 @@ P_peds_inj =ggplot(peds_injured_long, aes(x = date_vec, y=inj_count,color=boro))
   theme(axis.text.x = element_text(angle=45),axis.ticks.length.x = unit(-.1, "cm"),legend.title=element_blank()) 
  ggplotly(P_peds_inj,tooltip = c("inj_count","boro"))
 ```
+Could we say from the last two plots that Brooklyn is riskier and staten island is safer for pedestrians and motorists? We need to be careful!!!! Statistical fallacies.
+More studies need to be conducted to reach a conclusion.
+
+
+This project can be improved by adding plots on map and more. Any suggestion will be greatly appreciated.
+### Note the file is large, updating software help limit issues
