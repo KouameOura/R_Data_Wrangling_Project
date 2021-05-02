@@ -1,0 +1,371 @@
+---
+title: "Data Wrangling Project"
+author: "Kouame J Oura"
+date: "4/10/2021"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(jsonlite)
+library(lubridate)
+library(dplyr)
+library(gridExtra)
+library(ggplot2)
+library(magrittr)
+library(stringr)
+library(purrr)
+library(tidyr)
+library(plotly)
+```
+
+#                               ###### NEW YORK CITY MOTOR VEHICLE COLLISION #######
+
+## Data
+
+##### Downloading data and save it locally
+
+1768292 rows and 29 variables
+
+```{r}
+#### This part of the code is commented out to avoid downloading 
+#### accidentally the same data
+#### https://dmv.ny.gov/forms/p33.pdf Police Crash Report Submission Instructions
+# crash_url = "https://data.cityofnewyork.us/resource/h9gi-nx95.json?$limit=2000000"
+# GET(crash_url, write_disk(path="crash.json", overwrite=TRUE))
+```
+
+## Data cleaning and tranformation
+
+Loading only needed variables
+
+```{r}
+crash_data = jsonlite::fromJSON("crash.json")
+crash_data =crash_data[ , c("crash_date", "crash_time", "borough", "zip_code", "latitude", "longitude", "number_of_persons_injured", "number_of_persons_killed", "number_of_pedestrians_injured", "number_of_pedestrians_killed", "number_of_cyclist_injured", "number_of_cyclist_killed", "number_of_motorist_injured", "number_of_motorist_killed", "contributing_factor_vehicle_1", "contributing_factor_vehicle_2", "collision_id", "vehicle_type_code1", "vehicle_type_code2")]
+```
+
+#### First six rows of data
+
+```{r}
+crash_data = as_tibble(crash_data) # convert data.frame to tibble
+crash_data
+```
+#### Records missing accurate location
+
+```{r}
+sum(is.na(as.numeric(crash_data$longitude) & as.numeric(crash_data$latitude)))
+```
+
+Removing records missing location longitude or latitude coordinate
+
+```{r}
+crash_data = crash_data[! is.na(crash_data$longitude),]
+crash_data = crash_data[! is.na(crash_data$latitude),]
+```
+
+#### Primary key check
+
+```{r message=FALSE, warning=FALSE}
+library(sets)
+sum(is.na(crash_data$collision_id)) # Checking for missing primary key
+anyDuplicated(crash_data$collision_id) # Checking for duplicate records
+```
+
+#### Crash time format
+
+Remove the trailing component "T00:00:00.000" from crash_date,
+then rename concatenation of crash_date and crash_time as
+crash_time in the ymd_hm date format
+
+```{r}
+crash_data$crash_date = 
+  str_remove_all(crash_data$crash_date,"T[0-9]{2}:[0-9]{2}:[0-9]{2}.[0-9]{3}")
+crash_data$crash_time = ymd_hm(paste(crash_data$crash_date,crash_data$crash_time),tz = "EST")
+crash_data = crash_data[, -1]
+```
+#### Converting numeric type variables
+
+```{r}
+conv_func = function(x) as.double(x,digits=8) # conv_func converts to double
+crash_data[,c(4,5)] =
+  map_df(crash_data[,c(4,5)], conv_func)
+crash_data[,c(3,6,7,8,9,10,11,12,13,16)] = # Numeric conversion
+  map_df(crash_data[,c(3,6,7,8,9,10,11,12,13,16)], as.numeric)
+```
+
+## Visualization
+
+
+
+Contributing factor of crashes in New York city
+
+```{r message=FALSE, warning=FALSE}
+contrib1 = crash_data %>% 
+  select(contributing_factor_vehicle_1) %>%
+  group_by(contributing_factor_vehicle_1) %>%
+  summarise(crash_count=n()) %>%
+  mutate(rank = min_rank(desc(crash_count))) %>%
+   filter(rank <= 10 & contributing_factor_vehicle_1!="NA") %>%
+    arrange(rank)   # Top 10 contribution factor of crashes from vehicle 1
+
+p1 =ggplot( contrib1, 
+      aes(x=reorder(contributing_factor_vehicle_1,crash_count),crash_count)) +
+    geom_col(fill="firebrick2") +ggtitle("Top 10 contributing factor vehicle 1") + theme(plot.title =   element_text(hjust = 0.5)) + xlab("contribuiting factor") + ylab("crashes count") + coord_flip()  # Plot of top 10 contribution factor of crashes from vehicle 1
+
+
+contrib2=crash_data %>% select(contributing_factor_vehicle_2)%>% 
+  group_by(contributing_factor_vehicle_2) %>%
+  summarise(crash_count=n()) %>%
+  mutate(rank = min_rank(desc(crash_count))) %>%
+   filter(rank <= 10 & contributing_factor_vehicle_2 !="NA") %>%
+    arrange(rank)  # Top 10 contribution factor of crashes from vehicle 2
+
+p2 =ggplot( contrib2, 
+      aes(x=reorder(contributing_factor_vehicle_2,crash_count),crash_count)) +
+    geom_col(fill="firebrick2") +ggtitle("Top 10 contributing factor vehicle 2") + theme(plot.title =   element_text(hjust = 0.5)) + xlab("contribuiting factor") + ylab("crashes count") + coord_flip()  # Plot of top 10 contribution factor of crashes from vehicle 2
+```
+
+#### Plot of contributing factors
+
+
+
+```{r, fig.height=4}
+grid.arrange(p1,p2)
+```
+
+Monthly crashes data
+```{r}
+monthly_crash_raw=crash_data %>% 
+  mutate(crash_year = year(crash_time), crash_month = month(crash_time)) %>%
+  select(crash_year,crash_month,borough, number_of_persons_injured,number_of_persons_killed,number_of_pedestrians_injured,number_of_pedestrians_killed, number_of_cyclist_injured, number_of_cyclist_killed,number_of_motorist_injured,number_of_motorist_killed) %>%
+  rename(pers_injured="number_of_persons_injured",pers_killed="number_of_persons_killed",pedest_injured="number_of_pedestrians_injured",pedest_killed="number_of_pedestrians_killed", cycl_injured="number_of_cyclist_injured",cycl_killed ="number_of_cyclist_killed",mot_injured="number_of_motorist_injured",mot_killed="number_of_motorist_killed") %>%
+  group_by(crash_year,crash_month) # Monthly crashes data
+```
+
+
+```{r message=FALSE, warning=FALSE}
+# aggregation by month for each variable
+monthly_crash=monthly_crash_raw %>% select(-borough) %>%
+  summarise(across(everything(), list(function(x) sum(x,na.rm = TRUE)))) %>%
+  mutate(event_date=(paste(crash_year,crash_month,sep = "_"))) 
+  monthly_crash = cbind(1:nrow(monthly_crash),monthly_crash) %>%
+    rename(date_vec = "...1",pers_injured="pers_injured_1", pers_killed="pers_killed_1",
+           pedest_injured="pedest_injured_1",pedest_killed="pedest_killed_1",
+           cycl_injured="cycl_injured_1", cycl_killed="cycl_killed_1", mot_injured="mot_injured_1",mot_killed ="mot_killed_1")
+labels_x = monthly_crash$event_date
+```
+
+
+#### Monthly total crashes plot
+
+```{r , fig.height=2 ,message=FALSE, warning=FALSE}
+total_monthly_crash = 
+  monthly_crash_raw %>% select(crash_year,crash_month) %>%
+  summarise(total_event = n())
+total_monthly_crash = cbind(total_monthly_crash,1:nrow(total_monthly_crash))%>% 
+  rename(date_month ="...4")
+P_mth_tot=ggplot(total_monthly_crash, aes(x=date_month,y=total_event,color="red3")) + geom_line() + ggtitle("Monthly total crashes plot") + 
+  theme(plot.title =   element_text(hjust = 0.5))+  xlab("Date") + scale_x_discrete(limits=labels_x,guide = guide_axis(check.overlap = TRUE))+
+  ylab("crashes count")  +
+  theme(axis.text.x = element_text(angle=45), axis.ticks.length.x = unit(-.1, "cm"),legend.position = "none")
+ggplotly(P_mth_tot, tooltip = c("total_event"))
+```
+
+
+#### Fatalities(Injured/killed) plot
+
+```{r, fig.height=2 }
+monthly_crash_cat=monthly_crash %>% mutate(injured = pers_injured, killed=pers_killed) %>%
+  select(date_vec,injured,killed) %>%
+  pivot_longer(!date_vec, names_to = "fatalities", values_to = "monthly_count")
+P_mth_crash=monthly_crash_cat %>%ggplot(aes(x=date_vec,y=monthly_count,group=fatalities,color=fatalities)) + geom_line() + ggtitle("Fatalities plot") + 
+  theme(plot.title =   element_text(hjust = 0.5))+  xlab("Date") + scale_x_discrete(limits=labels_x,guide = guide_axis(check.overlap = TRUE))+
+  ylab("crashes count")  +
+  theme(axis.text.x = element_text(angle=45), axis.ticks.length.x = unit(-.1, "cm"),legend.position="bottom",legend.title=element_blank())
+ggplotly(P_mth_crash, tooltip = c("fatality_category","monthly_count"))
+```
+
+
+#### Plot by fatalities categories
+
+```{r, fig.height=2 }
+# Plot by variable 
+
+monthly_crash_long = monthly_crash[,-c(2,3,4,5,12)]
+monthly_crash_long %<>%
+  pivot_longer(!date_vec, names_to = "fatality_category", values_to = "monthly_count")
+
+P_mth_long=monthly_crash_long %>% ggplot(aes(x=date_vec,y=monthly_count,color=fatality_category)) + geom_line() + ggtitle("Fatalities by category") + 
+  theme(plot.title =   element_text(hjust = 0.5))+  xlab("Date") + scale_x_discrete(limits=labels_x,guide = guide_axis(check.overlap = TRUE))+
+  ylab("crashes count")  +
+  theme(axis.text.x = element_text(angle=45),axis.ticks.length.x = unit(-.1, "cm"),legend.position="bottom",legend.title=element_blank())
+ggplotly(P_mth_long, tooltip = c("fatality_category","monthly_count"))
+```
+
+
+
+Monthly aggregation by borough
+
+BRONX
+```{r message=FALSE, warning=FALSE}
+bronx_crash=monthly_crash_raw %>% filter(borough=="BRONX") %>% select(-borough)%>%
+  summarise(across(everything(), list(function(x) sum(x,na.rm = TRUE)))) %>%
+  mutate(event_date=(paste(crash_year,crash_month,sep = "_")))
+  bronx_crash = cbind(1:nrow(bronx_crash),bronx_crash) %>%
+   rename(date_vec = "...1",pers_injured="pers_injured_1", pers_killed="pers_killed_1",
+           pedest_injured="pedest_injured_1",pedest_killed="pedest_killed_1",
+           cycl_injured="cycl_injured_1", cycl_killed="cycl_killed_1", mot_injured="mot_injured_1",mot_killed ="mot_killed_1")
+```
+
+BROOKLYN
+```{r message=FALSE, warning=FALSE}
+brooklyn_crash=monthly_crash_raw %>% filter(borough=="BROOKLYN") %>% select(-borough)%>%
+  summarise(across(everything(), list(function(x) sum(x,na.rm = TRUE)))) %>%
+  mutate(event_date=(paste(crash_year,crash_month,sep = "_")))
+  brooklyn_crash = cbind(1:nrow(brooklyn_crash),brooklyn_crash) %>%
+    rename(date_vec = "...1",pers_injured="pers_injured_1", pers_killed="pers_killed_1",
+           pedest_injured="pedest_injured_1",pedest_killed="pedest_killed_1",
+           cycl_injured="cycl_injured_1", cycl_killed="cycl_killed_1", mot_injured="mot_injured_1",mot_killed ="mot_killed_1")
+```
+
+MANHATTAN
+```{r message=FALSE, warning=FALSE}
+manhattan_crash=monthly_crash_raw %>% filter(borough=="MANHATTAN") %>% select(-borough)%>%
+  summarise(across(everything(), list(function(x) sum(x,na.rm = TRUE)))) %>%
+  mutate(event_date=(paste(crash_year,crash_month,sep = "_")))
+  manhattan_crash = cbind(1:nrow(manhattan_crash),manhattan_crash) %>%
+  rename(date_vec = "...1",pers_injured="pers_injured_1", pers_killed="pers_killed_1",
+           pedest_injured="pedest_injured_1",pedest_killed="pedest_killed_1",
+           cycl_injured="cycl_injured_1", cycl_killed="cycl_killed_1", mot_injured="mot_injured_1",mot_killed ="mot_killed_1")
+```
+
+QUEENS
+```{r message=FALSE, warning=FALSE}
+queens_crash=monthly_crash_raw %>% filter(borough=="QUEENS") %>% select(-borough)%>%
+  summarise(across(everything(), list(function(x) sum(x,na.rm = TRUE)))) %>%
+  mutate(event_date=(paste(crash_year,crash_month,sep = "_")))
+  queens_crash = cbind(1:nrow(queens_crash),queens_crash) %>%
+   rename(date_vec = "...1",pers_injured="pers_injured_1", pers_killed="pers_killed_1",
+           pedest_injured="pedest_injured_1",pedest_killed="pedest_killed_1",
+           cycl_injured="cycl_injured_1", cycl_killed="cycl_killed_1", mot_injured="mot_injured_1",mot_killed ="mot_killed_1")
+```
+
+STATEN ISLAND
+```{r message=FALSE, warning=FALSE}
+statenIsl_crash=monthly_crash_raw %>% filter(borough=="STATEN ISLAND") %>% select(-borough)%>%
+  summarise(across(everything(), list(function(x) sum(x,na.rm = TRUE)))) %>%
+  mutate(event_date=(paste(crash_year,crash_month,sep = "_")))
+  statenIsl_crash = cbind(1:nrow(statenIsl_crash),statenIsl_crash) %>%
+   rename(date_vec = "...1",pers_injured="pers_injured_1", pers_killed="pers_killed_1",
+           pedest_injured="pedest_injured_1",pedest_killed="pedest_killed_1",
+           cycl_injured="cycl_injured_1", cycl_killed="cycl_killed_1", mot_injured="mot_injured_1",mot_killed ="mot_killed_1")
+```
+
+#### Fatalities plot per borough
+
+##### BRONX
+```{r, fig.height=2 }
+bronx_crash_long = bronx_crash[,-c(2,3,12)]
+bronx_crash_long %<>%
+  pivot_longer(!date_vec, names_to = "fatality_category", values_to = "monthly_count")
+ P_bronx = ggplot(bronx_crash_long, aes(x=date_vec,y=monthly_count,fill=fatality_category)) + geom_bar(position="stack", stat="identity") + ggtitle("Fatalities Bronx") + 
+  theme(plot.title =   element_text(hjust = 0.5))+  xlab("Date") + scale_x_discrete(limits=labels_x,guide = guide_axis(check.overlap = TRUE))+
+  ylab("fatality count")  +
+  theme(axis.text.x = element_text(angle=45),axis.ticks.length.x = unit(-.1, "cm"),legend.position="bottom",legend.title=element_blank()) + coord_cartesian(xlim=c(len_xaxis-24, len_xaxis))
+ ggplotly(P_bronx, tooltip = c("fatality_category","monthly_count"))
+```
+
+##### BROOKLYN
+```{r, fig.height=2 }
+brooklyn_crash_long = brooklyn_crash[,-c(2,3,12)]
+brooklyn_crash_long %<>%
+  pivot_longer(!date_vec, names_to = "fatality_category", values_to = "monthly_count")
+ P_brooklyn = ggplot(brooklyn_crash_long, aes(x=date_vec,y=monthly_count,fill=fatality_category)) + geom_bar(position="stack", stat="identity") + ggtitle("Fatalities Brooklyn") + 
+  theme(plot.title =   element_text(hjust = 0.5))+  xlab("Date") + scale_x_discrete(limits=labels_x,guide = guide_axis(check.overlap = TRUE))+
+  ylab("fatality count")  +
+  theme(axis.text.x = element_text(angle=45),axis.ticks.length.x = unit(-.1, "cm"),legend.position="bottom",legend.title=element_blank()) + coord_cartesian(xlim=c(len_xaxis-24, len_xaxis))
+ ggplotly(P_brooklyn,tooltip = c("fatality_category","monthly_count"))
+```
+
+##### MANHATTAN
+```{r, fig.height=2 }
+manhattan_crash_long = manhattan_crash[,-c(2,3,12)]
+manhattan_crash_long %<>%
+  pivot_longer(!date_vec, names_to = "fatality_category", values_to = "monthly_count")
+ P_manhattan = ggplot(manhattan_crash_long, aes(x=date_vec,y=monthly_count,fill=fatality_category)) + geom_bar(position="stack", stat="identity") + ggtitle("Fatalities Manhattan") + 
+  theme(plot.title =   element_text(hjust = 0.5))+  xlab("Date") + scale_x_discrete(limits=labels_x,guide = guide_axis(check.overlap = TRUE))+
+  ylab("fatality count")  +
+  theme(axis.text.x = element_text(angle=45),axis.ticks.length.x = unit(-.1, "cm"),legend.position="bottom",legend.title=element_blank()) + coord_cartesian(xlim=c(len_xaxis-24, len_xaxis))
+ ggplotly(P_manhattan, tooltip = c("fatality_category","monthly_count"))
+```
+
+##### QUEENS
+```{r, fig.height=2 }
+queens_crash_long = queens_crash[,-c(2,3,12)]
+queens_crash_long %<>%
+  pivot_longer(!date_vec, names_to = "fatality_category", values_to = "monthly_count")
+ P_queens = ggplot(queens_crash_long, aes(x=date_vec,y=monthly_count,fill=fatality_category)) + geom_bar(position="stack", stat="identity") + ggtitle("Fatalities Queens") + 
+  theme(plot.title =   element_text(hjust = 0.5))+  xlab("Date") + scale_x_discrete(limits=labels_x,guide = guide_axis(check.overlap = TRUE))+
+  ylab("fatality count")  +
+  theme(axis.text.x = element_text(angle=45),axis.ticks.length.x = unit(-.1, "cm"),legend.position="bottom",legend.title=element_blank()) + coord_cartesian(xlim=c(len_xaxis-24, len_xaxis))
+ ggplotly(P_queens, tooltip = c("fatality_category","monthly_count"))
+```
+
+##### STATEN ISLAND
+```{r, fig.height=2 }
+statenIsl_crash_long = statenIsl_crash[,-c(2,3,12)]
+statenIsl_crash_long %<>%
+  pivot_longer(!date_vec, names_to = "fatality_category", values_to = "monthly_count")
+ P_statenIsl = ggplot(statenIsl_crash_long, aes(x=date_vec,y=monthly_count,fill=fatality_category)) + geom_bar(position="stack", stat="identity") + ggtitle("Fatalities Staten Island") + 
+  theme(plot.title =   element_text(hjust = 0.5))+  xlab("Date") + scale_x_discrete(limits=labels_x,guide = guide_axis(check.overlap = TRUE))+
+  ylab("fatality count")  +
+  theme(axis.text.x = element_text(angle=45),axis.ticks.length.x = unit(-.1, "cm"), legend.position="bottom",legend.title=element_blank()) 
+ ggplotly(P_statenIsl,tooltip = c("fatality_category","monthly_count"))
+```
+
+```{r}
+boro_mot_injured = data.frame(bronx_crash$date_vec, bronx_crash$mot_injured,
+                brooklyn_crash$mot_injured,manhattan_crash$mot_injured, 
+                queens_crash$mot_injured,statenIsl_crash$mot_injured)
+colnames(boro_mot_injured) = c("date_vec", "Bronx", "Brooklyn",
+                            "Manhattan","Queens","StatenIsl")
+```
+
+#### Motorists injured in NYC boroughs
+
+```{r, fig.height=2 }
+mot_injured_long = boro_mot_injured %>%
+  pivot_longer(!date_vec, names_to = "boro", values_to = "inj_count")
+P_mot_inj =ggplot(mot_injured_long, aes(x = date_vec, y=inj_count,color=boro)) + 
+  geom_line() + ggtitle("Motorists injured in NYC boroughs") +
+  theme(plot.title =   element_text(hjust = 0.5))+  xlab("Date") + ylab("Motorists injured")  + 
+  scale_x_discrete(limits=labels_x)+
+  theme(axis.text.x = element_text(angle=45),axis.ticks.length.x = unit(-.1, "cm"),legend.title=element_blank()) 
+ ggplotly(P_mot_inj,tooltip = c("inj_count","boro"))
+```
+
+```{r}
+boro_peds_injured = data.frame(bronx_crash$date_vec, bronx_crash$pedest_injured,
+                brooklyn_crash$pedest_injured,manhattan_crash$pedest_injured, 
+                queens_crash$pedest_injured,statenIsl_crash$pedest_injured)
+colnames(boro_peds_injured) = c("date_vec", "Bronx", "Brooklyn",
+                            "Manhattan","Queens","StatenIsl")
+```
+
+#### Pedestrians injured in NYC boroughs
+
+```{r, fig.height=2 }
+peds_injured_long = boro_peds_injured %>%
+  pivot_longer(!date_vec, names_to = "boro", values_to = "inj_count")
+P_peds_inj =ggplot(peds_injured_long, aes(x = date_vec, y=inj_count,color=boro)) + 
+  geom_line() + ggtitle("Pedestrians injured in NYC boroughs") +
+  theme(plot.title =   element_text(hjust = 0.5))+  xlab("Date") + ylab("Motorists injured")  + 
+  scale_x_discrete(limits=labels_x)+
+  theme(axis.text.x = element_text(angle=45),axis.ticks.length.x = unit(-.1, "cm"),legend.title=element_blank()) 
+ ggplotly(P_peds_inj,tooltip = c("inj_count","boro"))
+```
