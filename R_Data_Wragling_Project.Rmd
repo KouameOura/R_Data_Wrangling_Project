@@ -33,11 +33,9 @@ library(plotly)
 1768292 rows and 29 variables
 
 ```{r}
-#### This part of the code is commented out to avoid downloading 
-#### accidentally the same data
 #### https://dmv.ny.gov/forms/p33.pdf Police Crash Report Submission Instructions
-# crash_url = "https://data.cityofnewyork.us/resource/h9gi-nx95.json?$limit=2000000"
-# GET(crash_url, write_disk(path="crash.json", overwrite=TRUE))
+crash_url = "https://data.cityofnewyork.us/resource/h9gi-nx95.json?$limit=2000000"
+GET(crash_url, write_disk(path="crash.json", overwrite=TRUE))
 ```
 
 ## Data cleaning and tranformation
