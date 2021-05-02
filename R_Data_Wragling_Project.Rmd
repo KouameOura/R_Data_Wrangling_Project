@@ -399,4 +399,4 @@ More studies need to be conducted to reach a conclusion.
 
 
 This project can be improved by adding plots on map and more. Any suggestion will be greatly appreciated.
-### Note the file is large, updating software help limit issues
+### Note: The file is large, updating software help limit issues
